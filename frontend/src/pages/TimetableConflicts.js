@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { pageStyle, cardStyle, titleStyle, subtitleStyle } from "../theme";
-import {
-  getTimetable,
-  detectTimetableConflicts,
-} from "../services/timetableService";
+import { getTimetable, getConflicts } from "../services/campusService";
 
 function TimetableConflicts() {
   const [timetable, setTimetable] = useState([]);
@@ -13,14 +10,14 @@ function TimetableConflicts() {
 
   useEffect(() => {
     getTimetable()
-      .then((res) => setTimetable(res.data))
+      .then((res) => setTimetable(res.data || []))
       .finally(() => setLoadingTable(false));
   }, []);
 
   const handleDetectConflicts = async () => {
     setLoadingConflicts(true);
     try {
-      const res = await detectTimetableConflicts();
+      const res = await getConflicts();
       setConflicts(res.data || []);
     } finally {
       setLoadingConflicts(false);
@@ -39,14 +36,14 @@ function TimetableConflicts() {
         </header>
 
         {/* Top controls */}
-        <div className="flex items-center justify-between mb-4 gap-3">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <p className="text-xs text-slate-400">
             Showing {timetable.length} timetable entries.
           </p>
           <button
             onClick={handleDetectConflicts}
             disabled={loadingConflicts}
-            className="inline-flex items-center gap-2 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-semibold text-slate-950 shadow-md hover:bg-amber-400 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-semibold text-slate-950 shadow-md hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loadingConflicts ? "Checking..." : "Detect Conflicts"}
           </button>
@@ -135,11 +132,20 @@ function TimetableConflicts() {
               key={index}
               className="flex items-start gap-3 rounded-xl border border-amber-500/70 bg-amber-900/40 px-4 py-3 text-xs text-amber-100"
             >
-              <span className="text-lg leading-none">⚠</span>
+              <span className="text-lg leading-none">!</span>
               <div>
                 <p className="font-semibold">{conflict.type}</p>
                 <p className="mt-0.5 text-[11px] text-amber-100/90">
-                  {conflict.message}
+                  {(conflict.course || "Unknown course") +
+                    " · " +
+                    (conflict.faculty || "Unknown faculty")}
+                </p>
+                <p className="mt-0.5 text-[11px] text-amber-100/90">
+                  Room {conflict.room || "-"} at {conflict.timeslot || "-"}
+                </p>
+                <p className="mt-0.5 text-[11px] text-amber-100/80">
+                  Students: {conflict.students ?? 0} /{" "}
+                  {conflict.capacity ?? 0}
                 </p>
               </div>
             </div>

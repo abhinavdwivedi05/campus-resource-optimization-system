@@ -79,6 +79,15 @@ function Sidebar() {
               Complaints
             </NavLink>
             <NavLink
+              to="/upload-timetable"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              Upload Timetable
+            </NavLink>
+            <NavLink
               to="/timetable"
               style={({ isActive }) => ({
                 ...linkBaseStyle,
@@ -86,6 +95,33 @@ function Sidebar() {
               })}
             >
               Timetable
+            </NavLink>
+            <NavLink
+              to="/timetable-conflicts"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              View Conflicts
+            </NavLink>
+            <NavLink
+              to="/timetable-optimizer"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              Timetable Optimizer
+            </NavLink>
+            <NavLink
+              to="/campus-heatmap"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              Campus Heatmap
             </NavLink>
             <NavLink
               to="/analytics"
@@ -152,13 +188,22 @@ function Sidebar() {
               Dashboard
             </NavLink>
             <NavLink
-              to="/timetable"
+              to="/upload-timetable"
               style={({ isActive }) => ({
                 ...linkBaseStyle,
                 ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
               })}
             >
               Upload Timetable
+            </NavLink>
+            <NavLink
+              to="/timetable"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              Timetable
             </NavLink>
             <NavLink
               to="/timetable-conflicts"
@@ -168,6 +213,24 @@ function Sidebar() {
               })}
             >
               View Conflicts
+            </NavLink>
+            <NavLink
+              to="/timetable-optimizer"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              Timetable Optimizer
+            </NavLink>
+            <NavLink
+              to="/campus-heatmap"
+              style={({ isActive }) => ({
+                ...linkBaseStyle,
+                ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
+              })}
+            >
+              Campus Heatmap
             </NavLink>
           </>
         );

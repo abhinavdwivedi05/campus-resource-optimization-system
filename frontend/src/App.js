@@ -11,7 +11,10 @@ import Complaints from "./pages/Complaints";
 import CreateComplaint from "./pages/CreateComplaint";
 import Timetable from "./pages/Timetable";
 import TimetableConflicts from "./pages/TimetableConflicts";
+import TimetableOptimizer from "./pages/TimetableOptimizer";
+import CampusHeatmap from "./pages/CampusHeatmap";
 import Analytics from "./pages/Analytics";
+import UploadTimetable from "./pages/UploadTimetable";
 
 import DashboardLayout from "./layout/DashboardLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -20,7 +23,6 @@ function App() {
   return (
     <Router>
       <Routes>
-
         {/* Auth pages (no sidebar/navbar) */}
         <Route path="/" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
@@ -95,7 +97,7 @@ function App() {
         <Route
           path="/timetable"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute allowedRoles={["admin", "faculty", "student"]}>
               <DashboardLayout>
                 <Timetable />
               </DashboardLayout>
@@ -106,9 +108,42 @@ function App() {
         <Route
           path="/timetable-conflicts"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute allowedRoles={["admin", "faculty"]}>
               <DashboardLayout>
                 <TimetableConflicts />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/timetable-optimizer"
+          element={
+            <ProtectedRoute allowedRoles={["admin", "faculty"]}>
+              <DashboardLayout>
+                <TimetableOptimizer />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/campus-heatmap"
+          element={
+            <ProtectedRoute allowedRoles={["admin", "faculty", "guard"]}>
+              <DashboardLayout>
+                <CampusHeatmap />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/upload-timetable"
+          element={
+            <ProtectedRoute allowedRoles={["admin", "faculty"]}>
+              <DashboardLayout>
+                <UploadTimetable />
               </DashboardLayout>
             </ProtectedRoute>
           }
@@ -124,7 +159,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
       </Routes>
     </Router>
   );
