@@ -1,7 +1,9 @@
 import API from "./api";
 
 export const createComplaint = (payload) => {
-  return API.post("/complaint", payload);
+  return API.post("/complaint", payload, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
 };
 
 export const getComplaints = () => {

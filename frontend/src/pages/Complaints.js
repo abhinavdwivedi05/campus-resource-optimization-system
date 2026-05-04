@@ -64,6 +64,12 @@ const statusPillStyle = (status) => {
   };
 };
 
+const getComplaintImageSrc = (imageUrl) => {
+  if (typeof imageUrl !== "string" || !imageUrl.trim()) return null;
+  const normalizedPath = imageUrl.trim().replace(/^\/+/, "");
+  return `http://localhost:8000/${normalizedPath}`;
+};
+
 function Complaints() {
   const [complaints, setComplaints] = useState([]);
   const [updatingId, setUpdatingId] = useState(null);
@@ -110,6 +116,7 @@ function Complaints() {
             <thead>
               <tr>
                 <th style={thStyle}>Title</th>
+                <th style={thStyle}>Image</th>
                 <th style={thStyle}>Description</th>
                 <th style={thStyle}>Location</th>
                 <th style={thStyle}>Priority</th>
@@ -121,6 +128,15 @@ function Complaints() {
               {complaints.map((c, i) => (
                 <tr key={i}>
                   <td style={tdStyle}>{c.title}</td>
+                  <td style={tdStyle}>
+                    {c.image_url && (
+                      <img
+                        src={getComplaintImageSrc(c.image_url)}
+                        alt="complaint"
+                        style={{ width: "100%", borderRadius: "8px" }}
+                      />
+                    )}
+                  </td>
                   <td style={tdStyle}>{c.description}</td>
                   <td style={tdStyle}>{c.location}</td>
                   <td style={tdStyle}>{c.priority}</td>

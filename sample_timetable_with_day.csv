@@ -1,0 +1,4 @@
+course,faculty,room,day,timeslot,students,capacity
+CS101,Dr Sharma,A101,Monday,9AM,60,50
+CS102,Dr Sharma,B201,Tuesday,9AM,40,60
+CS103,Dr Verma,C301,Monday,9AM,35,40

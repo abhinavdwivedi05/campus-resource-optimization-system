@@ -55,6 +55,9 @@ function TimetableConflicts() {
             <thead className="bg-slate-900/70">
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-semibold text-slate-400">
+                  Day
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-400">
                   Course
                 </th>
                 <th className="px-4 py-2 text-left text-xs font-semibold text-slate-400">
@@ -78,7 +81,7 @@ function TimetableConflicts() {
               {loadingTable ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-4 py-6 text-center text-xs text-slate-400"
                   >
                     Loading timetable...
@@ -87,7 +90,7 @@ function TimetableConflicts() {
               ) : timetable.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-4 py-6 text-center text-xs text-slate-400"
                   >
                     No timetable data available.
@@ -99,6 +102,7 @@ function TimetableConflicts() {
                     key={row._id}
                     className="border-t border-slate-800/70 hover:bg-slate-800/40"
                   >
+                    <td className="px-4 py-2">{row.day || "Monday"}</td>
                     <td className="px-4 py-2">{row.course}</td>
                     <td className="px-4 py-2">{row.faculty}</td>
                     <td className="px-4 py-2">{row.room}</td>
@@ -136,12 +140,15 @@ function TimetableConflicts() {
               <div>
                 <p className="font-semibold">{conflict.type}</p>
                 <p className="mt-0.5 text-[11px] text-amber-100/90">
+                  {(conflict.day || "Monday") + " at " + (conflict.timeslot || "-")}
+                </p>
+                <p className="mt-0.5 text-[11px] text-amber-100/90">
                   {(conflict.course || "Unknown course") +
                     " · " +
                     (conflict.faculty || "Unknown faculty")}
                 </p>
                 <p className="mt-0.5 text-[11px] text-amber-100/90">
-                  Room {conflict.room || "-"} at {conflict.timeslot || "-"}
+                  Room {conflict.room || "-"}
                 </p>
                 <p className="mt-0.5 text-[11px] text-amber-100/80">
                   Students: {conflict.students ?? 0} /{" "}

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { pageStyle, cardStyle, titleStyle, subtitleStyle } from "../theme";
 import { getAnalytics } from "../services/analyticsService";
+import { getTimetable } from "../services/campusService";
+import TimetableGrid from "../components/TimetableGrid";
 
 const gridStyle = {
   display: "grid",
@@ -45,12 +47,21 @@ function Dashboard() {
     conflictsCount: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [timetableLoading, setTimetableLoading] = useState(true);
+  const [timetableEntries, setTimetableEntries] = useState([]);
 
   useEffect(() => {
     getAnalytics()
       .then((res) => setStats(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    getTimetable()
+      .then((res) => setTimetableEntries(res.data || []))
+      .catch(() => setTimetableEntries([]))
+      .finally(() => setTimetableLoading(false));
   }, []);
 
   if (loading) {
@@ -65,7 +76,7 @@ function Dashboard() {
 
   return (
     <div style={pageStyle}>
-      <div style={{ ...cardStyle, maxWidth: "720px" }}>
+      <div style={{ ...cardStyle, maxWidth: "1040px" }}>
         <header style={{ marginBottom: "10px" }}>
           <h2 style={titleStyle}>Admin Dashboard</h2>
           <p style={subtitleStyle}>
@@ -101,6 +112,28 @@ function Dashboard() {
             </div>
           </div>
         </div>
+
+        <section className="mt-8">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-100">
+                Weekly timetable
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                College-portal weekly grid. Conflicts are highlighted in red.
+              </p>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              {timetableEntries.length} entries
+            </p>
+          </div>
+
+          {timetableLoading ? (
+            <p className="text-xs text-slate-400">Loading timetable...</p>
+          ) : (
+            <TimetableGrid entries={timetableEntries} />
+          )}
+        </section>
       </div>
     </div>
   );

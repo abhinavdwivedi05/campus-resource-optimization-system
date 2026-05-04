@@ -73,8 +73,8 @@ function UploadTimetable() {
         <header style={headerStyle}>
           <h2 style={titleStyle}>Upload Timetable CSV</h2>
           <p style={subtitleStyle}>
-            Choose a CSV file with course, faculty, room, timeslot, students, capacity, department, and semester
-            columns. Only admins and faculty can upload bulk timetable data.
+            Choose a CSV file with course, faculty, room, day, timeslot, students, and capacity columns. Only admins
+            and faculty can upload bulk timetable data.
           </p>
         </header>
 
@@ -106,7 +106,10 @@ function UploadTimetable() {
               Header row with the following columns:
             </p>
             <p className="text-[11px] font-mono text-slate-200">
-              course, faculty, room, timeslot, students, capacity, department, semester
+              course, faculty, room, day, timeslot, students, capacity
+            </p>
+            <p className="mt-2 text-[11px] text-slate-400">
+              Optional extra columns (if you use them): department, semester.
             </p>
           </div>
         </div>

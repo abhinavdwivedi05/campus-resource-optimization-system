@@ -14,6 +14,7 @@ import {
 import { getTimetable as getTimetableApi } from "../services/campusService";
 import { addTimetableEntry } from "../services/timetableService";
 import { getUserRole } from "../utils/auth";
+import TimetableGrid from "../components/TimetableGrid";
 
 function Timetable() {
   const [entries, setEntries] = useState([]);
@@ -25,6 +26,7 @@ function Timetable() {
   const [course, setCourse] = useState("");
   const [faculty, setFaculty] = useState("");
   const [room, setRoom] = useState("");
+  const [day, setDay] = useState("");
   const [timeslot, setTimeslot] = useState("");
   const [students, setStudents] = useState("");
   const [capacity, setCapacity] = useState("");
@@ -39,8 +41,8 @@ function Timetable() {
     const roomSlots = {};
 
     items.forEach((e) => {
-      const facultyKey = `${e.faculty || ""}__${e.timeslot || ""}`;
-      const roomKey = `${e.room || ""}__${e.timeslot || ""}`;
+      const facultyKey = `${e.faculty || ""}__${e.day || ""}__${e.timeslot || ""}`;
+      const roomKey = `${e.room || ""}__${e.day || ""}__${e.timeslot || ""}`;
 
       if (!facultySlots[facultyKey]) facultySlots[facultyKey] = [];
       if (!roomSlots[roomKey]) roomSlots[roomKey] = [];
@@ -135,6 +137,7 @@ function Timetable() {
       !course.trim() ||
       !faculty.trim() ||
       !room.trim() ||
+      !day.trim() ||
       !timeslot.trim() ||
       submitting
     )
@@ -146,6 +149,7 @@ function Timetable() {
         course: course.trim(),
         faculty: faculty.trim(),
         room: room.trim(),
+        day: day.trim(),
         timeslot: timeslot.trim(),
         students: parseInt(students, 10) || 0,
         capacity: parseInt(capacity, 10) || 0,
@@ -154,6 +158,7 @@ function Timetable() {
       setCourse("");
       setFaculty("");
       setRoom("");
+      setDay("");
       setTimeslot("");
       setStudents("");
       setCapacity("");
@@ -251,6 +256,16 @@ function Timetable() {
                   value={room}
                   onChange={(e) => setRoom(e.target.value)}
                   placeholder="e.g. A101"
+                  required
+                />
+              </div>
+              <div style={fieldStyle}>
+                <label style={labelStyle}>Day</label>
+                <input
+                  style={inputBaseStyle}
+                  value={day}
+                  onChange={(e) => setDay(e.target.value)}
+                  placeholder="e.g. Monday"
                   required
                 />
               </div>
@@ -385,98 +400,14 @@ function Timetable() {
           </span>
         </section>
 
-        {/* Timetable grid */}
-        <div className="overflow-x-auto rounded-xl border border-slate-700/60 bg-slate-900/40">
-          <table className="min-w-full text-xs text-slate-100">
-            <thead className="bg-slate-900/70">
-              <tr>
-                <th className="px-3 py-2 text-left font-semibold text-slate-400">
-                  Room / Time
-                </th>
-                {timeslots.map((slot) => (
-                  <th
-                    key={slot}
-                    className="px-3 py-2 text-center font-semibold text-slate-400"
-                  >
-                    {slot}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td
-                    colSpan={1 + timeslots.length}
-                    className="px-4 py-6 text-center text-xs text-slate-400"
-                  >
-                    Loading timetable...
-                  </td>
-                </tr>
-              ) : rooms.length === 0 || timeslots.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={1 + timeslots.length}
-                    className="px-4 py-6 text-center text-xs text-slate-400"
-                  >
-                    No timetable data available.
-                  </td>
-                </tr>
-              ) : (
-                rooms.map((roomLabel) => (
-                  <tr
-                    key={roomLabel}
-                    className="border-t border-slate-800/70 hover:bg-slate-900/40"
-                  >
-                    <td className="px-3 py-2 text-sm font-medium text-slate-200">
-                      {roomLabel}
-                    </td>
-                    {timeslots.map((slot) => {
-                      const cellEntries = getCellEntries(roomLabel, slot);
-                      const bgClass = getCellColorClass(cellEntries);
-                      return (
-                        <td
-                          key={slot}
-                          className={`px-2 py-2 align-top`}
-                        >
-                          <div
-                            className={`min-h-[52px] rounded-md px-2 py-1.5 text-[11px] leading-snug ${bgClass}`}
-                          >
-                            {cellEntries.length === 0 ? (
-                              <span className="opacity-50">—</span>
-                            ) : (
-                              cellEntries.map((e, idx) => (
-                                <div
-                                  key={`${e._id || idx}`}
-                                  className={
-                                    idx > 0
-                                      ? "mt-1 border-t border-black/10 pt-1"
-                                      : ""
-                                  }
-                                >
-                                  <p className="font-semibold">
-                                    {e.course || "Unknown course"}
-                                  </p>
-                                  <p className="opacity-80">
-                                    {e.faculty || "Unknown faculty"}
-                                  </p>
-                                  <p className="opacity-80">
-                                    Students: {e.students || 0} /{" "}
-                                    {e.capacity || 0}
-                                  </p>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {/* Weekly grid (college portal-style) */}
+        {loading ? (
+          <p className="text-xs text-slate-400">Loading timetable...</p>
+        ) : entries.length === 0 ? (
+          <p className="text-xs text-slate-400">No timetable data available.</p>
+        ) : (
+          <TimetableGrid entries={entries} />
+        )}
       </div>
     </div>
   );

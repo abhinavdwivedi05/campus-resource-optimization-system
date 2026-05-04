@@ -233,6 +233,9 @@ def get_timetable():
 
     for t in timetable_collection.find():
         t["_id"] = str(t["_id"])
+        # Backwards-compat: legacy entries might not have day set
+        if not (t.get("day") or "").strip():
+            t["day"] = "Monday"
         timetable.append(t)
 
     return timetable
@@ -247,6 +250,7 @@ def add_timetable_entry(data: dict):
     - course: string
     - faculty: string
     - room: string
+    - day: string
     - timeslot: string
     - students: number
     - capacity: number
@@ -255,14 +259,15 @@ def add_timetable_entry(data: dict):
         "course": data.get("course", "").strip(),
         "faculty": data.get("faculty", "").strip(),
         "room": data.get("room", "").strip(),
+        "day": (data.get("day") or "Monday").strip(),
         "timeslot": data.get("timeslot", "").strip(),
         "students": int(data.get("students", 0) or 0),
         "capacity": int(data.get("capacity", 0) or 0),
     }
 
-    required_fields = ["course", "faculty", "room", "timeslot"]
+    required_fields = ["course", "faculty", "room", "day", "timeslot"]
     if any(not doc[field] for field in required_fields):
-        raise HTTPException(status_code=400, detail="course, faculty, room and timeslot are required")
+        raise HTTPException(status_code=400, detail="course, faculty, room, day and timeslot are required")
 
     result = timetable_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
@@ -276,7 +281,10 @@ async def upload_timetable(file: UploadFile = File(...)):
     Upload timetable data in CSV format and bulk insert into MongoDB.
 
     Expected CSV columns:
-    - course, faculty, room, timeslot, students, capacity, department, semester
+    - course, faculty, room, day, timeslot, students, capacity
+
+    Optional columns (kept if present):
+    - department, semester
     """
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Invalid file type. Only CSV files are allowed.")
@@ -305,26 +313,23 @@ async def upload_timetable(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read CSV file.")
 
-    required_columns = [
-        "course",
-        "faculty",
-        "room",
-        "timeslot",
-        "students",
-        "capacity",
-        "department",
-        "semester",
-    ]
+    required_columns = ["course", "faculty", "room", "day", "timeslot", "students", "capacity"]
+    optional_columns = ["department", "semester"]
 
-    if any(col not in df.columns for col in required_columns):
-        raise HTTPException(status_code=400, detail="Invalid CSV format. Missing required columns.")
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid CSV format. Missing required columns: {', '.join(missing)}",
+        )
 
-    # Keep only expected columns and coerce numeric fields
-    df = df[required_columns]
+    keep_columns = required_columns + [c for c in optional_columns if c in df.columns]
+    df = df[keep_columns]
     try:
         df["students"] = pd.to_numeric(df["students"], errors="raise")
         df["capacity"] = pd.to_numeric(df["capacity"], errors="raise")
-        df["semester"] = pd.to_numeric(df["semester"], errors="raise")
+        if "semester" in df.columns:
+            df["semester"] = pd.to_numeric(df["semester"], errors="raise")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid CSV format. Numeric fields must contain numbers.")
 
@@ -333,14 +338,17 @@ async def upload_timetable(file: UploadFile = File(...)):
 
     # Normalize whitespace and types
     for row in records:
-        for key in ["course", "faculty", "room", "timeslot", "department"]:
+        for key in ["course", "faculty", "room", "day", "timeslot", "department"]:
             value = row.get(key)
             if isinstance(value, str):
                 row[key] = value.strip()
         # Ensure integers for numeric fields
         row["students"] = int(row.get("students", 0) or 0)
         row["capacity"] = int(row.get("capacity", 0) or 0)
-        row["semester"] = int(row.get("semester", 0) or 0)
+        if "semester" in row:
+            row["semester"] = int(row.get("semester", 0) or 0)
+        if not (row.get("day") or "").strip():
+            raise HTTPException(status_code=400, detail="Invalid CSV format. 'day' cannot be empty.")
 
     if not records:
         return {"message": "No timetable rows found in CSV.", "rowsInserted": 0}
@@ -357,8 +365,8 @@ async def upload_timetable(file: UploadFile = File(...)):
 def get_timetable_conflicts():
     """
     Detect timetable conflicts:
-    - Faculty Clash: same faculty, same timeslot.
-    - Room Clash: same room, same timeslot.
+    - Faculty Clash: same faculty, same day, same timeslot.
+    - Room Clash: same room, same day, same timeslot.
     - Capacity Overflow: students > capacity.
     """
     entries = list(timetable_collection.find())
@@ -366,19 +374,21 @@ def get_timetable_conflicts():
     # Normalize and keep reference data
     for e in entries:
         e["_id"] = str(e["_id"])
+        if not (e.get("day") or "").strip():
+            e["day"] = "Monday"
 
     conflicts = []
 
     # Faculty clashes: same faculty teaching multiple classes in the same timeslot
     faculty_slots = {}
     for e in entries:
-        key = (e.get("faculty"), e.get("timeslot"))
+        key = (e.get("faculty"), e.get("day"), e.get("timeslot"))
         if key not in faculty_slots:
             faculty_slots[key] = []
         faculty_slots[key].append(e)
 
-    for (faculty, timeslot), items in faculty_slots.items():
-        if faculty and timeslot and len(items) > 1:
+    for (faculty, day, timeslot), items in faculty_slots.items():
+        if faculty and day and timeslot and len(items) > 1:
             for e in items:
                 conflicts.append(
                     {
@@ -386,6 +396,7 @@ def get_timetable_conflicts():
                         "course": e.get("course"),
                         "faculty": faculty,
                         "room": e.get("room"),
+                        "day": day,
                         "timeslot": timeslot,
                         "students": int(e.get("students", 0) or 0),
                         "capacity": int(e.get("capacity", 0) or 0),
@@ -395,13 +406,13 @@ def get_timetable_conflicts():
     # Room clashes: same room booked for multiple classes in the same timeslot
     room_slots = {}
     for e in entries:
-        key = (e.get("room"), e.get("timeslot"))
+        key = (e.get("room"), e.get("day"), e.get("timeslot"))
         if key not in room_slots:
             room_slots[key] = []
         room_slots[key].append(e)
 
-    for (room, timeslot), items in room_slots.items():
-        if room and timeslot and len(items) > 1:
+    for (room, day, timeslot), items in room_slots.items():
+        if room and day and timeslot and len(items) > 1:
             for e in items:
                 conflicts.append(
                     {
@@ -409,6 +420,7 @@ def get_timetable_conflicts():
                         "course": e.get("course"),
                         "faculty": e.get("faculty"),
                         "room": room,
+                        "day": day,
                         "timeslot": timeslot,
                         "students": int(e.get("students", 0) or 0),
                         "capacity": int(e.get("capacity", 0) or 0),
@@ -426,6 +438,7 @@ def get_timetable_conflicts():
                     "course": e.get("course"),
                     "faculty": e.get("faculty"),
                     "room": e.get("room"),
+                    "day": e.get("day"),
                     "timeslot": e.get("timeslot"),
                     "students": students,
                     "capacity": capacity,
@@ -439,8 +452,8 @@ def get_timetable_conflicts():
 def optimize_timetable():
     """
     Generate optimization suggestions for the timetable:
-    - Faculty clashes (same faculty, same timeslot)
-    - Room clashes (same room, same timeslot)
+    - Faculty clashes (same faculty, same day, same timeslot)
+    - Room clashes (same room, same day, same timeslot)
     - Capacity overflow (students > capacity)
     - Poor room utilization (very low utilization in oversized rooms)
     """
@@ -454,6 +467,7 @@ def optimize_timetable():
         e["course"] = (e.get("course") or "").strip()
         e["faculty"] = (e.get("faculty") or "").strip()
         e["room"] = (e.get("room") or "").strip()
+        e["day"] = (e.get("day") or "Monday").strip()
         e["timeslot"] = (e.get("timeslot") or "").strip()
         e["department"] = (e.get("department") or "").strip()
         e["students"] = int(e.get("students", 0) or 0)
@@ -470,18 +484,19 @@ def optimize_timetable():
     rooms = set()
     timeslots = set()
     room_capacity = {}
-    occupied = {}  # (room, timeslot) -> True
+    occupied = {}  # (room, day, timeslot) -> True
 
     for e in entries:
         room = e["room"]
+        day = e["day"]
         timeslot = e["timeslot"]
         if room:
             rooms.add(room)
             room_capacity[room] = max(room_capacity.get(room, 0), e["capacity"])
         if timeslot:
             timeslots.add(timeslot)
-        if room and timeslot:
-            occupied[(room, timeslot)] = True
+        if room and day and timeslot:
+            occupied[(room, day, timeslot)] = True
 
     timeslot_list = sorted(timeslots)
 
@@ -491,16 +506,16 @@ def optimize_timetable():
     faculty_busy = {}
 
     for e in entries:
-        key_f = (e["faculty"], e["timeslot"])
-        key_r = (e["room"], e["timeslot"])
+        key_f = (e["faculty"], e["day"], e["timeslot"])
+        key_r = (e["room"], e["day"], e["timeslot"])
         faculty_slots.setdefault(key_f, []).append(e)
         room_slots.setdefault(key_r, []).append(e)
-        if e["faculty"] and e["timeslot"]:
-            faculty_busy.setdefault(e["faculty"], set()).add(e["timeslot"])
+        if e["faculty"] and e["day"] and e["timeslot"]:
+            faculty_busy.setdefault((e["faculty"], e["day"]), set()).add(e["timeslot"])
 
-    def find_available_room_for_class(entry, target_timeslot: str):
+    def find_available_room_for_class(entry, target_day: str, target_timeslot: str):
         """Find a free room in the given timeslot with enough capacity, preferring same building and tighter fit."""
-        if not target_timeslot:
+        if not target_day or not target_timeslot:
             return None
 
         students = entry["students"]
@@ -512,7 +527,7 @@ def optimize_timetable():
             cap = room_capacity.get(room, 0)
             if cap <= 0 or cap < students:
                 continue
-            if (room, target_timeslot) in occupied:
+            if (room, target_day, target_timeslot) in occupied:
                 continue
             building_code = get_building_code(room)
             same_building = 1 if building_code and building_code == current_building else 0
@@ -538,7 +553,8 @@ def optimize_timetable():
         if capacity and students > capacity:
             # Try to find a bigger room in the same timeslot
             target_timeslot = e["timeslot"]
-            new_room = find_available_room_for_class(e, target_timeslot)
+            target_day = e["day"]
+            new_room = find_available_room_for_class(e, target_day, target_timeslot)
             if new_room and new_room != e["room"]:
                 suggestions.append(
                     {
@@ -547,6 +563,7 @@ def optimize_timetable():
                         "faculty": e["faculty"],
                         "issue": "Room capacity exceeded",
                         "currentRoom": e["room"],
+                        "currentDay": e["day"],
                         "currentTimeslot": e["timeslot"],
                         "suggestedRoom": new_room,
                         "reason": f"Room {new_room} has capacity {room_capacity.get(new_room, 0)} for {students} students.",
@@ -556,8 +573,8 @@ def optimize_timetable():
                 processed_ids.add(e["_id"])
 
     # 2. Faculty clash suggestions (move one of the clashing classes)
-    for (faculty, timeslot), items in faculty_slots.items():
-        if not faculty or not timeslot or len(items) <= 1:
+    for (faculty, day, timeslot), items in faculty_slots.items():
+        if not faculty or not day or not timeslot or len(items) <= 1:
             continue
         # Keep the first as-is, suggest adjustments for the rest
         for e in items[1:]:
@@ -566,7 +583,7 @@ def optimize_timetable():
 
             # Try a free timeslot (keep room if possible)
             suggestion_made = False
-            busy_slots = faculty_busy.get(faculty, set())
+            busy_slots = faculty_busy.get((faculty, day), set())
 
             for ts in timeslot_list:
                 if ts == timeslot:
@@ -575,7 +592,11 @@ def optimize_timetable():
                     continue
 
                 # Prefer to reuse the same room if it's free
-                if e["room"] and (e["room"], ts) not in occupied and e["capacity"] >= e["students"]:
+                if (
+                    e["room"]
+                    and (e["room"], day, ts) not in occupied
+                    and e["capacity"] >= e["students"]
+                ):
                     suggestions.append(
                         {
                             "entryId": e["_id"],
@@ -583,6 +604,7 @@ def optimize_timetable():
                             "faculty": e["faculty"],
                             "issue": "Faculty clash",
                             "currentRoom": e["room"],
+                            "currentDay": e["day"],
                             "currentTimeslot": e["timeslot"],
                             "suggestedTimeslot": ts,
                             "reason": f"Faculty {faculty} is free at {ts}, and room {e['room']} is available.",
@@ -594,7 +616,7 @@ def optimize_timetable():
                     break
 
                 # Otherwise, look for a new room at this free timeslot
-                new_room = find_available_room_for_class(e, ts)
+                new_room = find_available_room_for_class(e, day, ts)
                 if new_room:
                     suggestions.append(
                         {
@@ -603,6 +625,7 @@ def optimize_timetable():
                             "faculty": e["faculty"],
                             "issue": "Faculty clash",
                             "currentRoom": e["room"],
+                            "currentDay": e["day"],
                             "currentTimeslot": e["timeslot"],
                             "suggestedRoom": new_room,
                             "suggestedTimeslot": ts,
@@ -619,14 +642,14 @@ def optimize_timetable():
                 continue
 
     # 3. Room clash suggestions (same room booked for multiple classes in same timeslot)
-    for (room, timeslot), items in room_slots.items():
-        if not room or not timeslot or len(items) <= 1:
+    for (room, day, timeslot), items in room_slots.items():
+        if not room or not day or not timeslot or len(items) <= 1:
             continue
         # Keep the first entry; suggest alternative room for the others
         for e in items[1:]:
             if e["_id"] in processed_ids:
                 continue
-            new_room = find_available_room_for_class(e, timeslot)
+            new_room = find_available_room_for_class(e, day, timeslot)
             if new_room and new_room != room:
                 suggestions.append(
                     {
@@ -635,6 +658,7 @@ def optimize_timetable():
                         "faculty": e["faculty"],
                         "issue": "Room clash",
                         "currentRoom": room,
+                        "currentDay": e["day"],
                         "currentTimeslot": timeslot,
                         "suggestedRoom": new_room,
                         "reason": f"Room {new_room} is free at {timeslot} and has enough capacity.",
@@ -648,11 +672,12 @@ def optimize_timetable():
         if e["_id"] in processed_ids:
             continue
         room = e["room"]
+        day = e["day"]
         timeslot = e["timeslot"]
         students = e["students"]
         capacity = e["capacity"]
 
-        if not room or not timeslot or not capacity or students <= 0:
+        if not room or not day or not timeslot or not capacity or students <= 0:
             continue
 
         utilization = float(students) / float(capacity)
@@ -667,7 +692,7 @@ def optimize_timetable():
             cap_r = room_capacity.get(r, 0)
             if cap_r <= 0 or cap_r < students:
                 continue
-            if (r, timeslot) in occupied:
+            if (r, day, timeslot) in occupied:
                 continue
             if cap_r >= capacity:
                 continue  # not smaller
@@ -688,6 +713,7 @@ def optimize_timetable():
                 "faculty": e["faculty"],
                 "issue": "Poor room utilization",
                 "currentRoom": room,
+                "currentDay": day,
                 "currentTimeslot": timeslot,
                 "suggestedRoom": new_room,
                 "reason": f"Room {new_room} is smaller but still fits {students} students, improving utilization.",

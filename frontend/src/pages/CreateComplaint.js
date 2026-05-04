@@ -27,9 +27,26 @@ function CreateComplaint() {
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
   const [priority, setPriority] = useState("Medium");
+  const [imageFile, setImageFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) {
+      setImageFile(null);
+      return;
+    }
+
+    if (!file.type || !file.type.startsWith("image/")) {
+      setImageFile(null);
+      setErrorMessage("Only image files are allowed.");
+      return;
+    }
+
+    setImageFile(file);
+  };
 
   const handleSubmit = async () => {
     if (
@@ -46,17 +63,22 @@ function CreateComplaint() {
     setErrorMessage("");
 
     try {
-      await createComplaint({
-        title: title.trim(),
-        description: description.trim(),
-        location: location.trim(),
-        priority,
-      });
+      const formData = new FormData();
+      formData.append("title", title.trim());
+      formData.append("description", description.trim());
+      formData.append("location", location.trim());
+      formData.append("priority", priority);
+      if (imageFile) {
+        formData.append("image", imageFile);
+      }
+
+      await createComplaint(formData);
       setSuccessMessage("Your complaint has been submitted successfully.");
       setTitle("");
       setDescription("");
       setLocation("");
       setPriority("Medium");
+      setImageFile(null);
     } catch (error) {
       setErrorMessage("Something went wrong while submitting. Please try again.");
     } finally {
@@ -148,6 +170,22 @@ function CreateComplaint() {
               placeholder="Describe what happened, when it occurred, and any people involved..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+
+          <div style={fieldStyle}>
+            <div style={labelRowStyle}>
+              <label style={labelStyle} htmlFor="complaint-image">
+                Image (optional)
+              </label>
+              <span style={hintStyle}>Upload an image to support your complaint</span>
+            </div>
+            <input
+              id="complaint-image"
+              style={inputBaseStyle}
+              type="file"
+              accept="image/*"
+              onChange={handleImageChange}
             />
           </div>
         </div>
