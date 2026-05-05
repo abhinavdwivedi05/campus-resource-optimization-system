@@ -30,26 +30,34 @@ function TimetableOptimizer() {
   const handleApplySuggestion = async (suggestion) => {
     if (!suggestion?.entryId) return;
 
-    const payload = { id: suggestion.entryId };
-    if (suggestion.suggestedRoom) {
-      payload.room = suggestion.suggestedRoom;
-    }
-    if (suggestion.suggestedTimeslot) {
-      payload.timeslot = suggestion.suggestedTimeslot;
-    }
+    const issue = (suggestion?.issue || "").toLowerCase();
+    const isMultiClass = issue.includes("multiple classes in same slot");
 
-    if (!payload.room && !payload.timeslot) return;
+    // Prefer backend-driven resolution for multi-class conflicts
+    const payload = isMultiClass
+      ? { mode: "auto_reschedule", entryId: suggestion.entryId }
+      : { id: suggestion.entryId };
+
+    if (!isMultiClass) {
+      if (suggestion.suggestedRoom) {
+        payload.room = suggestion.suggestedRoom;
+      }
+      if (suggestion.suggestedDay) {
+        payload.day = suggestion.suggestedDay;
+      }
+      if (suggestion.suggestedTimeslot) {
+        payload.timeslot = suggestion.suggestedTimeslot;
+      }
+      if (!payload.room && !payload.timeslot && !payload.day) return;
+    }
 
     setApplyingId(suggestion.entryId);
     setError("");
     try {
       await applyOptimizationSuggestion(payload);
-      // Mark suggestion as applied locally
-      setSuggestions((prev) =>
-        prev.map((s) =>
-          s.entryId === suggestion.entryId ? { ...s, applied: true } : s
-        )
-      );
+      // Refresh suggestions to reflect the updated timetable and removed conflicts
+      const res = await getOptimizationSuggestions();
+      setSuggestions(res.data || []);
     } catch (err) {
       const msg =
         err?.response?.data?.detail ||
@@ -82,6 +90,17 @@ function TimetableOptimizer() {
     if (issue.includes("room clash")) return "Room Clash";
     if (issue.includes("utilization")) return "Optimization";
     return "Suggestion";
+  };
+
+  const getSuggestionType = (suggestion) => {
+    const explicit = (suggestion?.type || "").toString().trim().toLowerCase();
+    if (explicit) return explicit;
+    const issue = (suggestion?.issue || "").toLowerCase();
+    if (issue.includes("capacity")) return "capacity_overflow";
+    if (issue.includes("faculty")) return "faculty_clash";
+    if (issue.includes("room clash")) return "room_clash";
+    if (issue.includes("multiple classes in same slot")) return "multi_class_conflict";
+    return "";
   };
 
   return (
@@ -138,6 +157,8 @@ function TimetableOptimizer() {
           {suggestions.map((s, index) => {
             const cardClasses = getCardClasses(s);
             const badgeLabel = getBadgeLabel(s);
+            const suggestionType = getSuggestionType(s);
+            const hideApply = suggestionType === "capacity_overflow";
 
             return (
               <div
@@ -204,20 +225,29 @@ function TimetableOptimizer() {
                   </div>
                 </div>
 
-                {s.entryId && (s.suggestedRoom || s.suggestedTimeslot) && (
+                {hideApply ? (
                   <div className="ml-3 flex items-center">
-                    <button
-                      onClick={() => handleApplySuggestion(s)}
-                      disabled={applyingId === s.entryId || s.applied}
-                      className="rounded-full bg-emerald-400 px-3 py-1 text-[11px] font-semibold text-emerald-950 shadow hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {s.applied
-                        ? "Applied"
-                        : applyingId === s.entryId
-                        ? "Applying..."
-                        : "Apply Suggestion"}
-                    </button>
+                    <div style={{ color: "#facc15", fontWeight: "500" }}>
+                      Suggestion: Increase room capacity or assign a larger room
+                    </div>
                   </div>
+                ) : (
+                  s.entryId &&
+                  (s.suggestedRoom || s.suggestedTimeslot || s.suggestedDay) && (
+                    <div className="ml-3 flex items-center">
+                      <button
+                        onClick={() => handleApplySuggestion(s)}
+                        disabled={applyingId === s.entryId || s.applied}
+                        className="rounded-full bg-emerald-400 px-3 py-1 text-[11px] font-semibold text-emerald-950 shadow hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {s.applied
+                          ? "Applied"
+                          : applyingId === s.entryId
+                          ? "Applying..."
+                          : "Apply Suggestion"}
+                      </button>
+                    </div>
+                  )
                 )}
               </div>
             );

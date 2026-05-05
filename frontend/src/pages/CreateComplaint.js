@@ -72,7 +72,19 @@ function CreateComplaint() {
         formData.append("image", imageFile);
       }
 
-      await createComplaint(formData);
+      // Debug: log payload just before sending
+      try {
+        const entries = Array.from(formData.entries()).map(([k, v]) => [
+          k,
+          v instanceof File ? { name: v.name, type: v.type, size: v.size } : v,
+        ]);
+        console.log("[CreateComplaint] Submitting complaint payload:", entries);
+      } catch (e) {
+        console.log("[CreateComplaint] Could not log FormData entries:", e);
+      }
+
+      const res = await createComplaint(formData);
+      console.log("[CreateComplaint] createComplaint response:", res?.status, res?.data);
       setSuccessMessage("Your complaint has been submitted successfully.");
       setTitle("");
       setDescription("");
@@ -80,7 +92,22 @@ function CreateComplaint() {
       setPriority("Medium");
       setImageFile(null);
     } catch (error) {
-      setErrorMessage("Something went wrong while submitting. Please try again.");
+      // Show real backend error when available (FastAPI -> { detail: ... }).
+      const backendDetail =
+        error?.response?.data?.detail ||
+        error?.response?.data?.message ||
+        error?.message ||
+        null;
+      console.error("[CreateComplaint] createComplaint failed:", {
+        status: error?.response?.status,
+        data: error?.response?.data,
+        message: error?.message,
+      });
+      setErrorMessage(
+        backendDetail
+          ? String(backendDetail)
+          : "Something went wrong while submitting. Please try again."
+      );
     } finally {
       setIsSubmitting(false);
     }

@@ -1,8 +1,11 @@
 import API from "./api";
 
 export const createComplaint = (payload) => {
+  const isFormData = typeof FormData !== "undefined" && payload instanceof FormData;
+  // NOTE: When sending FormData, do NOT manually set Content-Type.
+  // Axios will set the correct multipart boundary automatically.
   return API.post("/complaint", payload, {
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: isFormData ? undefined : { "Content-Type": "application/json" },
   });
 };
 

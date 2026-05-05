@@ -44,7 +44,7 @@ function StudentDashboard() {
             <div style={actionDescStyle}>Report an issue with campus resources.</div>
           </Link>
           <Link to="/complaints" style={actionCardStyle}>
-            <div style={actionTitleStyle}>My Complaints</div>
+            <div style={actionTitleStyle}>All Complaints</div>
             <div style={actionDescStyle}>Track status of your submitted complaints.</div>
           </Link>
         </div>

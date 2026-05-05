@@ -105,7 +105,7 @@ function Complaints() {
     <div style={pageStyle}>
       <div style={{ ...cardStyle, maxWidth: "880px" }}>
         <header style={{ marginBottom: "10px" }}>
-          <h2 style={titleStyle}>Complaints</h2>
+          <h2 style={titleStyle}>All Complaints</h2>
           <p style={subtitleStyle}>
             Review the list of submitted complaints and their current status.
           </p>

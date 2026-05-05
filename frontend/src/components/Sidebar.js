@@ -76,7 +76,7 @@ function Sidebar() {
                 ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
               })}
             >
-              Complaints
+              All Complaints
             </NavLink>
             <NavLink
               to="/upload-timetable"
@@ -171,7 +171,7 @@ function Sidebar() {
                 ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
               })}
             >
-              My Complaints
+              All Complaints
             </NavLink>
           </>
         );
@@ -253,7 +253,7 @@ function Sidebar() {
                 ...(isActive ? activeLinkExtraStyle : inactiveLinkExtraStyle),
               })}
             >
-              Complaints
+              All Complaints
             </NavLink>
           </>
         );

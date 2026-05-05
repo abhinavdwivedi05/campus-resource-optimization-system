@@ -1,15 +1,26 @@
 from datetime import datetime
 import csv
 import io
+import uuid
+from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from bson import ObjectId
 
 from database import users_collection, complaints_collection, timetable_collection
 
 app = FastAPI()
+
+# ----------------------
+# Static uploads (complaint images)
+# ----------------------
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Allow React frontend (include custom X-User-Role header)
 app.add_middleware(
@@ -165,32 +176,89 @@ def get_complaints():
 
 
 @app.post("/complaint", dependencies=[Depends(require_roles("admin", "student"))])
-def create_complaint(data: dict):
+async def create_complaint(
+    title: str = Form(""),
+    description: str = Form(""),
+    location: str = Form(""),
+    priority: str = Form("Medium"),
+    image: Optional[UploadFile] = File(None),
+):
     """
     Create a new complaint.
 
-    Expected fields:
-    - title
-    - description
-    - location
-    - priority
+    Accepts multipart/form-data (used by the React form):
+    - title: string
+    - description: string
+    - location: string
+    - priority: Low | Medium | High
+    - image: optional file
     """
+    print(
+        "[complaint:create] incoming:",
+        {
+            "title": (title or "")[:80],
+            "location": (location or "")[:80],
+            "priority": priority,
+            "hasImage": bool(image),
+            "imageFilename": getattr(image, "filename", None),
+            "imageContentType": getattr(image, "content_type", None),
+        },
+    )
+
     doc = {
-        "title": data.get("title", "").strip(),
-        "description": data.get("description", "").strip(),
-        "location": data.get("location", "").strip(),
-        "priority": data.get("priority", "Medium"),
+        "title": (title or "").strip(),
+        "description": (description or "").strip(),
+        "location": (location or "").strip(),
+        "priority": (priority or "Medium").strip() or "Medium",
         "status": "Pending",
         "created_at": datetime.utcnow(),
     }
 
-    if not doc["title"] or not doc["description"]:
-        raise HTTPException(status_code=400, detail="Title and description are required")
+    allowed_priorities = {"Low", "Medium", "High"}
+    if doc["priority"] not in allowed_priorities:
+        raise HTTPException(status_code=400, detail="Invalid priority. Use Low, Medium, or High.")
 
-    result = complaints_collection.insert_one(doc)
-    doc["_id"] = str(result.inserted_id)
+    if not doc["title"] or not doc["description"] or not doc["location"]:
+        raise HTTPException(
+            status_code=400,
+            detail="title, description and location are required",
+        )
 
-    return doc
+    # Persist image to disk (optional) and store a URL the frontend can render.
+    if image is not None and getattr(image, "filename", None):
+        original_name = (image.filename or "").strip()
+        suffix = Path(original_name).suffix.lower()
+        # Basic safety: keep a reasonable extension; default when missing.
+        if not suffix or len(suffix) > 10:
+            suffix = ".jpg"
+
+        stored_name = f"{uuid.uuid4().hex}{suffix}"
+        stored_path = UPLOAD_DIR / stored_name
+
+        try:
+            content = await image.read()
+            stored_path.write_bytes(content)
+        except Exception as e:
+            print("[complaint:create] image save failed:", repr(e))
+            raise HTTPException(status_code=500, detail="Could not save uploaded image")
+
+        doc["image"] = {
+            "original_filename": original_name,
+            "stored_filename": stored_name,
+            "content_type": getattr(image, "content_type", None),
+        }
+        doc["image_url"] = f"/uploads/{stored_name}"
+
+    try:
+        result = complaints_collection.insert_one(doc)
+    except Exception as e:
+        print("[complaint:create] insert failed:", repr(e))
+        raise HTTPException(status_code=500, detail="Database insert failed")
+
+    complaint_id = str(result.inserted_id)
+    doc["_id"] = complaint_id
+
+    return {"message": "Complaint created", "complaint": doc}
 
 
 @app.put("/complaint/{complaint_id}", dependencies=[Depends(require_roles("admin", "guard"))])
@@ -367,6 +435,7 @@ def get_timetable_conflicts():
     Detect timetable conflicts:
     - Faculty Clash: same faculty, same day, same timeslot.
     - Room Clash: same room, same day, same timeslot.
+    - Multi-class conflict: more than one class in the same day+timeslot.
     - Capacity Overflow: students > capacity.
     """
     entries = list(timetable_collection.find())
@@ -377,72 +446,92 @@ def get_timetable_conflicts():
         if not (e.get("day") or "").strip():
             e["day"] = "Monday"
 
+    def norm_str(v) -> str:
+        return (v or "").strip()
+
+    def entry_view(e: dict) -> dict:
+        """Frontend-friendly entry shape for conflicts payloads."""
+        return {
+            "_id": e.get("_id"),
+            "course": norm_str(e.get("course")),
+            "faculty": norm_str(e.get("faculty")),
+            "room": norm_str(e.get("room")),
+            "day": norm_str(e.get("day")) or "Monday",
+            "timeslot": norm_str(e.get("timeslot")),
+            "students": int(e.get("students", 0) or 0),
+            "capacity": int(e.get("capacity", 0) or 0),
+            "department": norm_str(e.get("department")),
+            "semester": e.get("semester"),
+        }
+
+    def group_by(keys_fn):
+        groups = {}
+        for e in entries:
+            k = keys_fn(e)
+            groups.setdefault(k, []).append(e)
+        return groups
+
     conflicts = []
+    seen_group_ids = set()
 
-    # Faculty clashes: same faculty teaching multiple classes in the same timeslot
-    faculty_slots = {}
-    for e in entries:
-        key = (e.get("faculty"), e.get("day"), e.get("timeslot"))
-        if key not in faculty_slots:
-            faculty_slots[key] = []
-        faculty_slots[key].append(e)
+    def add_group_conflict(conflict_type: str, items: list, meta: dict):
+        # Deduplicate identical conflict groups (e.g. if emitted twice by mistake)
+        ids = sorted([str(x.get("_id")) for x in items if x.get("_id") is not None])
+        group_id = (conflict_type, tuple(ids))
+        if group_id in seen_group_ids:
+            return
+        seen_group_ids.add(group_id)
+        conflicts.append(
+            {
+                "type": conflict_type,
+                **meta,
+                "entries": [entry_view(x) for x in items],
+            }
+        )
 
-    for (faculty, day, timeslot), items in faculty_slots.items():
+    # 1) Multi-class conflicts: more than one class in the same (day, timeslot)
+    slot_groups = group_by(lambda e: (norm_str(e.get("day")) or "Monday", norm_str(e.get("timeslot"))))
+    for (day, timeslot), items in slot_groups.items():
+        if day and timeslot and len(items) > 1:
+            add_group_conflict(
+                "multi_class_conflict",
+                items,
+                {"day": day, "timeslot": timeslot},
+            )
+
+    # 2) Faculty clashes: same faculty teaching multiple classes in same slot
+    faculty_groups = group_by(
+        lambda e: (norm_str(e.get("faculty")), norm_str(e.get("day")) or "Monday", norm_str(e.get("timeslot")))
+    )
+    for (faculty, day, timeslot), items in faculty_groups.items():
         if faculty and day and timeslot and len(items) > 1:
-            for e in items:
-                conflicts.append(
-                    {
-                        "type": "Faculty Clash",
-                        "course": e.get("course"),
-                        "faculty": faculty,
-                        "room": e.get("room"),
-                        "day": day,
-                        "timeslot": timeslot,
-                        "students": int(e.get("students", 0) or 0),
-                        "capacity": int(e.get("capacity", 0) or 0),
-                    }
-                )
+            add_group_conflict(
+                "faculty_clash",
+                items,
+                {"faculty": faculty, "day": day, "timeslot": timeslot},
+            )
 
-    # Room clashes: same room booked for multiple classes in the same timeslot
-    room_slots = {}
-    for e in entries:
-        key = (e.get("room"), e.get("day"), e.get("timeslot"))
-        if key not in room_slots:
-            room_slots[key] = []
-        room_slots[key].append(e)
-
-    for (room, day, timeslot), items in room_slots.items():
+    # 3) Room clashes: same room booked for multiple classes in same slot
+    room_groups = group_by(
+        lambda e: (norm_str(e.get("room")), norm_str(e.get("day")) or "Monday", norm_str(e.get("timeslot")))
+    )
+    for (room, day, timeslot), items in room_groups.items():
         if room and day and timeslot and len(items) > 1:
-            for e in items:
-                conflicts.append(
-                    {
-                        "type": "Room Clash",
-                        "course": e.get("course"),
-                        "faculty": e.get("faculty"),
-                        "room": room,
-                        "day": day,
-                        "timeslot": timeslot,
-                        "students": int(e.get("students", 0) or 0),
-                        "capacity": int(e.get("capacity", 0) or 0),
-                    }
-                )
+            add_group_conflict(
+                "room_clash",
+                items,
+                {"room": room, "day": day, "timeslot": timeslot},
+            )
 
-    # Capacity overflow: students > capacity for a given class
+    # 4) Capacity overflow: students > capacity for a given entry
     for e in entries:
         students = int(e.get("students", 0) or 0)
         capacity = int(e.get("capacity", 0) or 0)
         if capacity and students > capacity:
-            conflicts.append(
-                {
-                    "type": "Capacity Overflow",
-                    "course": e.get("course"),
-                    "faculty": e.get("faculty"),
-                    "room": e.get("room"),
-                    "day": e.get("day"),
-                    "timeslot": e.get("timeslot"),
-                    "students": students,
-                    "capacity": capacity,
-                }
+            add_group_conflict(
+                "capacity_overflow",
+                [e],
+                {"day": norm_str(e.get("day")) or "Monday", "timeslot": norm_str(e.get("timeslot"))},
             )
 
     return conflicts
@@ -485,6 +574,7 @@ def optimize_timetable():
     timeslots = set()
     room_capacity = {}
     occupied = {}  # (room, day, timeslot) -> True
+    occupied_by = {}  # (room, day, timeslot) -> set(entryId)
 
     for e in entries:
         room = e["room"]
@@ -497,8 +587,13 @@ def optimize_timetable():
             timeslots.add(timeslot)
         if room and day and timeslot:
             occupied[(room, day, timeslot)] = True
+            occupied_by.setdefault((room, day, timeslot), set()).add(e["_id"])
 
     timeslot_list = sorted(timeslots)
+    # Prefer common weekdays order, but include any custom days found.
+    weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    day_set = {e["day"] for e in entries if e.get("day")}
+    day_list = [d for d in weekday_order if d in day_set] + sorted([d for d in day_set if d not in weekday_order])
 
     # Faculty / room grouping for clashes
     faculty_slots = {}
@@ -543,6 +638,138 @@ def optimize_timetable():
 
     suggestions = []
     processed_ids = set()
+
+    def is_faculty_free(entry, target_day: str, target_timeslot: str) -> bool:
+        fac = entry.get("faculty") or ""
+        if not fac or not target_day or not target_timeslot:
+            return True
+        return target_timeslot not in faculty_busy.get((fac, target_day), set())
+
+    def reserve_slot(entry_id: str, room: str, day: str, timeslot: str):
+        """Reserve a slot so subsequent suggestions don't collide."""
+        if not room or not day or not timeslot:
+            return
+        occupied[(room, day, timeslot)] = True
+        occupied_by.setdefault((room, day, timeslot), set()).add(entry_id)
+
+    # 0. Multi-class conflicts (more than one class in same day+timeslot) with actionable fixes
+    slot_groups = {}
+    for e in entries:
+        key = (e["day"], e["timeslot"])
+        slot_groups.setdefault(key, []).append(e)
+
+    for (day, timeslot), items in slot_groups.items():
+        if not day or not timeslot or len(items) <= 1:
+            continue
+
+        # Keep one entry in place; move the rest.
+        items_sorted = sorted(items, key=lambda x: (x.get("course") or "", x.get("_id") or ""))
+        keep = items_sorted[0]
+        for e in items_sorted[1:]:
+            if not e.get("_id"):
+                continue
+
+            # OPTION A: same day+timeslot, move to a free room that fits.
+            new_room = find_available_room_for_class(e, day, timeslot)
+            if new_room:
+                suggestions.append(
+                    {
+                        "entryId": e["_id"],
+                        "course": e["course"],
+                        "faculty": e["faculty"],
+                        "issue": "Multiple classes in same slot",
+                        "currentRoom": e["room"],
+                        "currentDay": day,
+                        "currentTimeslot": timeslot,
+                        "suggestedRoom": new_room,
+                        "reason": f"Slot {day} {timeslot} has {len(items)} classes; moving to free room {new_room}.",
+                        "severity": "major",
+                    }
+                )
+                reserve_slot(e["_id"], new_room, day, timeslot)
+                processed_ids.add(e["_id"])
+                continue
+
+            # OPTION B: find another (day, timeslot) and room.
+            suggestion_made = False
+
+            # Prefer same day, different timeslot first.
+            candidate_days = [day] + [d for d in day_list if d != day]
+            for cand_day in candidate_days:
+                for cand_ts in timeslot_list:
+                    if cand_day == day and cand_ts == timeslot:
+                        continue
+                    if not is_faculty_free(e, cand_day, cand_ts):
+                        continue
+
+                    # Try to keep same room if it's free and fits.
+                    if (
+                        e["room"]
+                        and room_capacity.get(e["room"], 0) >= e["students"]
+                        and (e["room"], cand_day, cand_ts) not in occupied
+                    ):
+                        suggestions.append(
+                            {
+                                "entryId": e["_id"],
+                                "course": e["course"],
+                                "faculty": e["faculty"],
+                                "issue": "Multiple classes in same slot",
+                                "currentRoom": e["room"],
+                                "currentDay": day,
+                                "currentTimeslot": timeslot,
+                                "suggestedDay": cand_day,
+                                "suggestedTimeslot": cand_ts,
+                                "reason": f"Slot {day} {timeslot} has {len(items)} classes; moving to {cand_day} {cand_ts} using same room {e['room']}.",
+                                "severity": "major",
+                            }
+                        )
+                        reserve_slot(e["_id"], e["room"], cand_day, cand_ts)
+                        processed_ids.add(e["_id"])
+                        suggestion_made = True
+                        break
+
+                    # Otherwise find any free room that fits.
+                    cand_room = find_available_room_for_class(e, cand_day, cand_ts)
+                    if cand_room:
+                        suggestions.append(
+                            {
+                                "entryId": e["_id"],
+                                "course": e["course"],
+                                "faculty": e["faculty"],
+                                "issue": "Multiple classes in same slot",
+                                "currentRoom": e["room"],
+                                "currentDay": day,
+                                "currentTimeslot": timeslot,
+                                "suggestedDay": cand_day,
+                                "suggestedTimeslot": cand_ts,
+                                "suggestedRoom": cand_room,
+                                "reason": f"Slot {day} {timeslot} has {len(items)} classes; moving to {cand_day} {cand_ts} in room {cand_room}.",
+                                "severity": "major",
+                            }
+                        )
+                        reserve_slot(e["_id"], cand_room, cand_day, cand_ts)
+                        processed_ids.add(e["_id"])
+                        suggestion_made = True
+                        break
+
+                if suggestion_made:
+                    break
+
+            # If no alternative found, we still surface the issue (non-actionable fallback).
+            if not suggestion_made:
+                suggestions.append(
+                    {
+                        "entryId": e["_id"],
+                        "course": e["course"],
+                        "faculty": e["faculty"],
+                        "issue": "Multiple classes in same slot",
+                        "currentRoom": e["room"],
+                        "currentDay": day,
+                        "currentTimeslot": timeslot,
+                        "reason": f"Slot {day} {timeslot} has {len(items)} classes; no free room or alternate slot found automatically.",
+                        "severity": "major",
+                    }
+                )
 
     # 1. Capacity overflow suggestions (room capacity exceeded)
     for e in entries:
@@ -725,6 +952,116 @@ def optimize_timetable():
     return suggestions
 
 
+@app.post("/optimize/apply", dependencies=[Depends(require_roles("admin", "faculty"))])
+def apply_optimization(data: dict):
+    """
+    Apply an optimization automatically on the backend.
+
+    Current supported use-case:
+    - Resolve multi-class conflicts by moving ONE entry to a free timeslot.
+
+    Payload:
+    - entryId: string (required)
+
+    Behavior:
+    - Finds the entry's current (day, timeslot)
+    - If multiple entries exist in that slot, moves the requested entry to a free slot
+      (same day preferred, otherwise next available day)
+    - Updates MongoDB and returns the updated entry + new slot
+    """
+    entry_id = (data.get("entryId") or data.get("id") or "").strip()
+    if not entry_id:
+        raise HTTPException(status_code=400, detail="entryId is required")
+
+    try:
+        obj_id = ObjectId(entry_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid entryId")
+
+    entry = timetable_collection.find_one({"_id": obj_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Timetable entry not found")
+
+    day = (entry.get("day") or "Monday").strip()
+    timeslot = (entry.get("timeslot") or "").strip()
+    if not timeslot:
+        raise HTTPException(status_code=400, detail="Entry has no timeslot")
+
+    # Get all entries in the same slot (day+timeslot)
+    slot_entries = list(timetable_collection.find({"day": day, "timeslot": timeslot}))
+    if len(slot_entries) <= 1:
+        # Nothing to resolve
+        entry["_id"] = str(entry["_id"])
+        return {"message": "No multi-class conflict found for this entry.", "updated": False, "entry": entry}
+
+    # Keep the first entry unchanged; move all remaining ones (caller picks which to move)
+    # Only proceed if the selected entry is NOT the kept one.
+    slot_entries_sorted = sorted(slot_entries, key=lambda x: (str(x.get("course") or ""), str(x.get("_id"))))
+    kept_id = str(slot_entries_sorted[0].get("_id"))
+    if kept_id == entry_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This entry is the kept class for the slot. Apply to another conflicting entry.",
+        )
+
+    TIMESLOTS = ["9AM", "10AM", "11AM", "12PM", "1PM", "2PM", "3PM", "4PM", "5PM", "6PM"]
+    WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    all_days = list({(e.get("day") or "Monday").strip() for e in timetable_collection.find({}, {"day": 1})})
+    ordered_days = [d for d in WEEKDAYS if d in all_days] + sorted([d for d in all_days if d not in WEEKDAYS])
+    if day not in ordered_days:
+        ordered_days = [day] + ordered_days
+
+    # Build occupied slots by (day, timeslot) across all entries
+    occupied = set()
+    for e in timetable_collection.find({}, {"day": 1, "timeslot": 1}):
+        d = (e.get("day") or "Monday").strip()
+        ts = (e.get("timeslot") or "").strip()
+        if d and ts:
+            occupied.add((d, ts))
+
+    def find_free_slot(preferred_day: str):
+        # Same day first
+        for ts in TIMESLOTS:
+            if ts == timeslot:
+                continue
+            if (preferred_day, ts) not in occupied:
+                return preferred_day, ts
+        # Then next available day
+        for d in ordered_days:
+            if d == preferred_day:
+                continue
+            for ts in TIMESLOTS:
+                if (d, ts) not in occupied:
+                    return d, ts
+        return None, None
+
+    new_day, new_timeslot = find_free_slot(day)
+    if not new_day or not new_timeslot:
+        raise HTTPException(status_code=409, detail="No free slot available to resolve conflict")
+
+    # Update DB
+    result = timetable_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"day": new_day, "timeslot": new_timeslot}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Timetable entry not found")
+
+    updated = timetable_collection.find_one({"_id": obj_id})
+    updated["_id"] = str(updated["_id"])
+    if not (updated.get("day") or "").strip():
+        updated["day"] = "Monday"
+
+    return {
+        "message": "Optimization applied",
+        "updated": True,
+        "old": {"day": day, "timeslot": timeslot, "room": (entry.get("room") or "").strip()},
+        "new": {"day": new_day, "timeslot": new_timeslot, "room": (entry.get("room") or "").strip()},
+        "entry": updated,
+    }
+
+
 @app.put("/timetable/update", dependencies=[Depends(require_roles("admin", "faculty"))])
 def update_timetable_entry(data: dict):
     """
@@ -747,6 +1084,7 @@ def update_timetable_entry(data: dict):
         "course",
         "faculty",
         "room",
+        "day",
         "timeslot",
         "students",
         "capacity",

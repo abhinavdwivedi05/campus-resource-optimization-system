@@ -138,22 +138,37 @@ function TimetableConflicts() {
             >
               <span className="text-lg leading-none">!</span>
               <div>
-                <p className="font-semibold">{conflict.type}</p>
+                <p className="font-semibold">{conflict.type || "Conflict"}</p>
                 <p className="mt-0.5 text-[11px] text-amber-100/90">
                   {(conflict.day || "Monday") + " at " + (conflict.timeslot || "-")}
                 </p>
-                <p className="mt-0.5 text-[11px] text-amber-100/90">
-                  {(conflict.course || "Unknown course") +
-                    " · " +
-                    (conflict.faculty || "Unknown faculty")}
-                </p>
-                <p className="mt-0.5 text-[11px] text-amber-100/90">
-                  Room {conflict.room || "-"}
-                </p>
-                <p className="mt-0.5 text-[11px] text-amber-100/80">
-                  Students: {conflict.students ?? 0} /{" "}
-                  {conflict.capacity ?? 0}
-                </p>
+
+                {Array.isArray(conflict.entries) && conflict.entries.length > 0 ? (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[11px] text-amber-100/80">
+                      Involved classes: {conflict.entries.length}
+                    </p>
+                    {conflict.entries.slice(0, 6).map((e) => (
+                      <div key={e._id || `${e.course}-${e.room}-${e.faculty}`} className="text-[11px]">
+                        <span className="font-semibold">{e.course || "Unknown course"}</span>
+                        <span className="opacity-90">
+                          {" "}
+                          · {e.faculty || "Unknown faculty"} · Room {e.room || "-"} ·{" "}
+                          {e.students ?? 0}/{e.capacity ?? 0}
+                        </span>
+                      </div>
+                    ))}
+                    {conflict.entries.length > 6 ? (
+                      <p className="text-[11px] text-amber-100/80">
+                        +{conflict.entries.length - 6} more…
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="mt-0.5 text-[11px] text-amber-100/80">
+                    No entry details available.
+                  </p>
+                )}
               </div>
             </div>
           ))}
