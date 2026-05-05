@@ -82,14 +82,14 @@ function toInt(v) {
 
 function buildGrid(entries) {
   const grid = {};
-  const conflicts = {};
+  const cellConflictType = {};
 
   DAYS.forEach((d) => {
     grid[d] = {};
-    conflicts[d] = {};
+    cellConflictType[d] = {};
     TIMESLOTS.forEach((t) => {
       grid[d][t] = [];
-      conflicts[d][t] = false;
+      cellConflictType[d][t] = "normal";
     });
   });
 
@@ -129,30 +129,53 @@ function buildGrid(entries) {
       const cell = grid[day][ts];
       if (!cell || cell.length === 0) return;
 
-      // Portal grid: anything overlapping the same (day+timeslot) is a conflict.
-      let conflict = cell.length > 1;
+      // Prefer backend-provided conflict_type per entry, with a frontend fallback.
+      const types = new Set(
+        cell.map((e) => s(e?.conflict_type || "normal").toLowerCase() || "normal")
+      );
 
-      const facultySeen = new Set();
-      const roomSeen = new Set();
-      for (const e of cell) {
-        const faculty = s(e.faculty);
-        const room = s(e.room);
-        const students = toInt(e.students);
-        const capacity = toInt(e.capacity);
+      // Fallback detection if older payloads don't include conflict_type.
+      if (types.size === 1 && types.has("normal")) {
+        const facultySeen = new Set();
+        const roomSeen = new Set();
+        let hasRoom = cell.length > 1;
+        let hasFaculty = false;
+        let hasCapacity = false;
 
-        if (capacity > 0 && students > capacity) conflict = true;
-        if (faculty && facultySeen.has(faculty)) conflict = true;
-        if (room && roomSeen.has(room)) conflict = true;
+        for (const e of cell) {
+          const faculty = s(e.faculty);
+          const room = s(e.room);
+          const students = toInt(e.students);
+          const capacity = toInt(e.capacity);
 
-        if (faculty) facultySeen.add(faculty);
-        if (room) roomSeen.add(room);
+          if (capacity > 0 && students > capacity) hasCapacity = true;
+          if (faculty && facultySeen.has(faculty)) hasFaculty = true;
+          if (room && roomSeen.has(room)) hasRoom = true;
+
+          if (faculty) facultySeen.add(faculty);
+          if (room) roomSeen.add(room);
+        }
+
+        if (hasRoom) types.add("room_clash");
+        else if (hasFaculty) types.add("faculty_clash");
+        else if (hasCapacity) types.add("capacity_overflow");
       }
 
-      conflicts[day][ts] = conflict;
+      // Priority: room_clash > faculty_clash > capacity_overflow > normal
+      const t =
+        types.has("room_clash")
+          ? "room_clash"
+          : types.has("faculty_clash")
+          ? "faculty_clash"
+          : types.has("capacity_overflow")
+          ? "capacity_overflow"
+          : "normal";
+
+      cellConflictType[day][ts] = t;
     });
   });
 
-  return { grid, conflicts };
+  return { grid, cellConflictType };
 }
 
 function tooltip(cell) {
@@ -170,7 +193,55 @@ function tooltip(cell) {
 }
 
 export default function TimetableGrid({ entries = [] }) {
-  const { grid, conflicts } = useMemo(() => buildGrid(entries), [entries]);
+  const { grid, cellConflictType } = useMemo(() => buildGrid(entries), [entries]);
+
+  const getCellStyle = (conflictType) => {
+    if (!conflictType || conflictType === "normal") {
+      return {
+        cell: "bg-emerald-900/25 border-emerald-500/25",
+        badge: "bg-emerald-500/10 text-emerald-100 ring-1 ring-emerald-500/25",
+        text: "text-slate-100",
+        subtext: "text-slate-200/75",
+      };
+    }
+    if (conflictType === "faculty_clash") {
+      return {
+        cell: "bg-orange-900/25 border-orange-500/25",
+        badge: "bg-orange-500/10 text-orange-100 ring-1 ring-orange-500/25",
+        text: "text-slate-100",
+        subtext: "text-slate-200/75",
+      };
+    }
+    if (conflictType === "room_clash") {
+      return {
+        cell: "bg-red-900/25 border-red-500/25",
+        badge: "bg-red-500/10 text-red-100 ring-1 ring-red-500/25",
+        text: "text-slate-100",
+        subtext: "text-slate-200/75",
+      };
+    }
+    if (conflictType === "capacity_overflow") {
+      return {
+        cell: "bg-yellow-900/25 border-yellow-500/25",
+        badge: "bg-yellow-500/10 text-yellow-100 ring-1 ring-yellow-500/25",
+        text: "text-slate-100",
+        subtext: "text-slate-200/75",
+      };
+    }
+    return {
+      cell: "bg-emerald-900/25 border-emerald-500/25",
+      badge: "bg-emerald-500/10 text-emerald-100 ring-1 ring-emerald-500/25",
+      text: "text-slate-100",
+      subtext: "text-slate-200/75",
+    };
+  };
+
+  const getConflictLabel = (conflictType) => {
+    if (conflictType === "faculty_clash") return "Faculty clash";
+    if (conflictType === "room_clash") return "Room clash";
+    if (conflictType === "capacity_overflow") return "Capacity overflow";
+    return "";
+  };
 
   return (
     <div>
@@ -200,38 +271,38 @@ export default function TimetableGrid({ entries = [] }) {
                 </td>
                 {TIMESLOTS.map((t) => {
                   const cell = grid?.[day]?.[t] || [];
-                  const conflict = !!conflicts?.[day]?.[t];
-                  const bg =
-                    cell.length === 0
-                      ? "bg-transparent"
-                      : conflict
-                      ? "bg-red-500/20"
-                      : "bg-emerald-500/15";
+                  const conflictType = cellConflictType?.[day]?.[t] || "normal";
+                  const hasAny = cell.length > 0;
+                  const label = getConflictLabel(conflictType);
+                  const style = getCellStyle(conflictType);
+                  const bg = hasAny ? style.cell : "bg-transparent";
 
                   return (
                     <td
                       key={`${day}-${t}`}
                       title={tooltip(cell)}
-                      className={`border border-slate-800/70 px-2 py-2 text-center align-top transition-colors hover:bg-white/5 ${bg}`}
+                      className={`border px-2 py-2 text-center align-top transition-colors hover:bg-white/5 ${
+                        hasAny ? bg : "border-slate-800/70"
+                      } ${hasAny ? style.text : ""}`}
                     >
                       {cell.length === 0 ? (
                         <span className="text-slate-500">—</span>
                       ) : (
                         <div className="space-y-1">
-                          {conflict ? (
-                            <div className="mx-auto inline-flex rounded-full bg-red-500/25 px-2 py-0.5 text-[11px] font-semibold text-red-100">
-                              Conflict
+                          {label ? (
+                            <div className={`mx-auto inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.badge}`}>
+                              {label}
                             </div>
                           ) : null}
                           <div className="font-semibold">{s(cell[0]?.course) || "—"}</div>
-                          <div className="text-[11px] text-slate-200/80">
+                          <div className={`text-[11px] ${style.subtext}`}>
                             {s(cell[0]?.faculty) || "—"}
                           </div>
-                          <div className="text-[11px] text-slate-200/70">
+                          <div className={`text-[11px] ${style.subtext}`}>
                             {s(cell[0]?.room) || "—"}
                           </div>
                           {cell.length > 1 ? (
-                            <div className="text-[11px] text-red-100/90">
+                            <div className={`text-[11px] ${style.subtext}`}>
                               +{cell.length - 1} more
                             </div>
                           ) : null}

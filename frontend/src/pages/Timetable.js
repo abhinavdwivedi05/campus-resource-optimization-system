@@ -383,20 +383,20 @@ function Timetable() {
             Legend
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-green-100" />
+            <span className="h-3 w-3 rounded-full bg-emerald-900/40 ring-1 ring-emerald-500/25" />
             <span>Normal class / available</span>
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-yellow-200" />
             <span>Faculty clash</span>
+            <span className="h-3 w-3 rounded-full bg-orange-900/40 ring-1 ring-orange-500/25" />
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-red-200" />
+            <span className="h-3 w-3 rounded-full bg-red-900/40 ring-1 ring-red-500/25" />
             <span>Room clash</span>
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded-full bg-orange-200" />
             <span>Capacity overflow</span>
+            <span className="h-3 w-3 rounded-full bg-yellow-900/40 ring-1 ring-yellow-500/25" />
           </span>
         </section>
 

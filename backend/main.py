@@ -297,16 +297,61 @@ def get_timetable():
     """
     Get all timetable entries.
     """
-    timetable = []
+    entries = list(timetable_collection.find())
 
-    for t in timetable_collection.find():
-        t["_id"] = str(t["_id"])
+    # Normalize and make frontend-friendly
+    for e in entries:
+        e["_id"] = str(e["_id"])
         # Backwards-compat: legacy entries might not have day set
-        if not (t.get("day") or "").strip():
-            t["day"] = "Monday"
-        timetable.append(t)
+        if not (e.get("day") or "").strip():
+            e["day"] = "Monday"
 
-    return timetable
+    def norm_str(v) -> str:
+        return (v or "").strip()
+
+    # Compute conflict_type per entry.
+    # Priority: room_clash > faculty_clash > capacity_overflow > normal
+    faculty_slots = {}
+    room_slots = {}
+    for e in entries:
+        day = norm_str(e.get("day")) or "Monday"
+        timeslot = norm_str(e.get("timeslot"))
+        faculty = norm_str(e.get("faculty"))
+        room = norm_str(e.get("room"))
+        if faculty and day and timeslot:
+            faculty_slots.setdefault((faculty, day, timeslot), []).append(e)
+        if room and day and timeslot:
+            room_slots.setdefault((room, day, timeslot), []).append(e)
+
+    room_clash_ids = set()
+    for items in room_slots.values():
+        if len(items) > 1:
+            for e in items:
+                if e.get("_id") is not None:
+                    room_clash_ids.add(str(e.get("_id")))
+
+    faculty_clash_ids = set()
+    for items in faculty_slots.values():
+        if len(items) > 1:
+            for e in items:
+                if e.get("_id") is not None:
+                    faculty_clash_ids.add(str(e.get("_id")))
+
+    for e in entries:
+        eid = str(e.get("_id"))
+        students = int(e.get("students", 0) or 0)
+        capacity = int(e.get("capacity", 0) or 0)
+
+        if eid in room_clash_ids:
+            e["conflict_type"] = "room_clash"
+        elif eid in faculty_clash_ids:
+            e["conflict_type"] = "faculty_clash"
+        elif capacity and students > capacity:
+            e["conflict_type"] = "capacity_overflow"
+        else:
+            e["conflict_type"] = "normal"
+
+    return entries
 
 
 @app.post("/timetable", dependencies=[Depends(require_roles("admin", "faculty"))])
